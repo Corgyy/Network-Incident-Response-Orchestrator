@@ -1,0 +1,8 @@
+{
+    "agent_name": "Recon_OSINT_Agent",
+    "target_ip": "192.168.250.70",
+    "reputation_score": 0,
+    "country_code": "Unknown",
+    "malicious_engines": 0,
+    "is_malicious": false
+}
