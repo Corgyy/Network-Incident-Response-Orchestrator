@@ -1,7 +1,6 @@
-# Data and Logs
-.pi/logs/
-.pi/output/
-.pi/data/*.json
+# Ignore data content but keep the directory
+.pi/data/*
+!.pi/data/.gitkeep
 
 # Python
 __pycache__/
