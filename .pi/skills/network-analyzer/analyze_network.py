@@ -4,14 +4,21 @@ from datetime import datetime, timedelta
 import os
 
 def parse_splunk_time(time_str):
-    """Parses Splunk/ISO 8601 timestamp formats."""
-    # Common format in BOTSv1: 2016-08-24T18:27:32.732845Z
+    """Parses Splunk/ISO 8601 timestamp formats and normalizes to UTC."""
     try:
-        # Strip micro/nano seconds for easier parsing if needed, or use fromisoformat
-        clean_time = time_str.split('.')[0].replace('Z', '')
-        return datetime.fromisoformat(clean_time)
+        # Using fromisoformat which handles 'Z' and offsets like -06:00 in Python 3.11+
+        # BOTSv1 often has -0600 (without colon), let's fix that if needed
+        t_str = time_str.replace('Z', '+00:00')
+        if len(t_str) > 19 and t_str[-5] in ['+', '-'] and t_str[-3] != ':':
+            t_str = t_str[:-2] + ':' + t_str[-2:]
+        
+        dt = datetime.fromisoformat(t_str)
+        # Convert to UTC
+        if dt.tzinfo:
+            dt = dt.astimezone(timedelta(0))
+        return dt.replace(tzinfo=None) # Strip tzinfo for naive comparison
     except Exception:
-        # Fallback for other formats
+        # Fallback
         return datetime.strptime(time_str[:19], "%Y-%m-%dT%H:%M:%S")
 
 def analyze_network(src_ip, target_timestamp_str, input_file):
