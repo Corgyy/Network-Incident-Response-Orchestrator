@@ -1,67 +1,46 @@
 ---
 name: log-collector
-description: Analyzes Sysmon logs from BOTSv1 data to extract host-based evidence such as process creation, suspicious command lines, executable artifacts, hashes, and process-level network connections.
+description: Optimized Host-based forensic collection using Grep-First strategy.
 parameters:
   dest_ip:
     type: string
-    description: The victim destination IP address to investigate.
+    description: "The victim IP address to investigate."
+    required: true
   target_timestamp:
     type: string
-    description: The timestamp of the alert in ISO format.
-  input_file:
-    type: string
-    description: Path to the sysmon_logs_botsv1.json file.
-    default: ".pi/data/sysmon_logs_botsv1.json"
-  alert_file:
-    type: string
-    description: Optional path to the alerts_trigger_botsv1.json file. Used when dest_ip and target_timestamp are not provided manually.
-    default: ".pi/data/alerts_trigger_botsv1.json"
+    description: "Pivot timestamp in ISO/Splunk format."
+    required: true
   window:
     type: integer
-    description: Time window in minutes around the alert timestamp.
+    description: "Search radius in minutes (+/-)."
     default: 5
+  input_file:
+    type: string
+    description: "Path to Sysmon NDJSON logs."
+    default: "./.pi/data/sysmon_logs_botsv1.json"
   output_file:
     type: string
-    description: Path to save the full Log Collector JSON result.
-    default: ".pi/output/log_collector_result.json"
+    description: "Path to save result JSON."
+    default: "./.pi/output/log_collector_result.json"
 outputs:
-  suspicious_processes:
-    type: array
-    description: Suspicious Sysmon Event ID 1 process creation records.
-  suspicious_commands:
-    type: array
-    description: Suspicious command lines detected from process creation events.
-  network_connections:
-    type: array
-    description: Victim-related Sysmon Event ID 3 network connection records.
-  executable_evidence:
-    type: array
-    description: Executable artifacts discovered in suspicious or interesting host paths.
-  hash_evidence:
-    type: array
-    description: Hash values extracted from Sysmon process creation events.
   analysis_summary:
     type: string
-    description: A human-readable summary of host-based activity.
+    description: "Human-readable summary of suspicious findings."
+  risk_level:
+    type: string
+    description: "Final risk assessment (high/low)."
 ---
 
 # Log Collector Skill
 
-This skill processes Sysmon logs from Splunk BOTSv1 to identify host-based evidence related to an incident.
-
-## Capabilities
-
-- **Time-Windowed Filtering:** Filters Sysmon events within a configurable time window around the alert timestamp.
-- **Process Creation Analysis:** Extracts Sysmon Event ID 1 records.
-- **Network Connection Analysis:** Extracts Sysmon Event ID 3 records related to the victim IP.
-- **Suspicious Command Detection:** Detects PowerShell, cmd.exe, certutil, rundll32, regsvr32, wscript, schtasks, wmic, and other suspicious command patterns.
-- **Executable Evidence Extraction:** Finds suspicious executable artifacts such as web-root or user-directory executables.
-- **Hash Extraction:** Extracts MD5, SHA1, SHA256, and IMPHASH values when available.
-- **JSON Output:** Saves the full analysis result to a JSON file for downstream MITRE mapping and IR reporting.
-
-## Usage
-
-Alert-based analysis:
-
+## Execution Syntax
 ```bash
-python .pi/skills/log-collector/collect_logs.py --input-file .pi/data/sysmon_logs_botsv1.json --alert-file .pi/data/alerts_trigger_botsv1.json --window 5 --output-file .pi/output/log_collector_result.json
+python3 ./.pi/skills/log-collector/collect_logs.py \
+  --dest-ip "192.168.250.70" \
+  --target-timestamp "2016-08-10T15:36:48Z" \
+  --window 60 \
+  --input-file "./.pi/data/sysmon_logs_botsv1.json"
+```
+
+## Operational Constraints
+- **Default Paths:** Now points to `./.pi/data/sysmon_logs_botsv1.json`.

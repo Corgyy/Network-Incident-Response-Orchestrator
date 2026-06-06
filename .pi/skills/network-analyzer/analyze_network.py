@@ -1,120 +1,90 @@
 import json
+import argparse
 import sys
-from datetime import datetime, timedelta
+import subprocess
 import os
+from datetime import datetime, timedelta, timezone
 
 def parse_splunk_time(time_str):
-    """Parses Splunk/ISO 8601 timestamp formats and normalizes to UTC."""
     try:
-        # Using fromisoformat which handles 'Z' and offsets like -06:00 in Python 3.11+
-        # BOTSv1 often has -0600 (without colon), let's fix that if needed
         t_str = time_str.replace('Z', '+00:00')
         if len(t_str) > 19 and t_str[-5] in ['+', '-'] and t_str[-3] != ':':
             t_str = t_str[:-2] + ':' + t_str[-2:]
-        
         dt = datetime.fromisoformat(t_str)
-        # Convert to UTC
-        if dt.tzinfo:
-            dt = dt.astimezone(timedelta(0))
-        return dt.replace(tzinfo=None) # Strip tzinfo for naive comparison
+        if dt.tzinfo: dt = dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=None)
     except Exception:
-        # Fallback
         return datetime.strptime(time_str[:19], "%Y-%m-%dT%H:%M:%S")
 
-def analyze_network(src_ip, target_timestamp_str, input_file):
-    if not os.path.exists(input_file):
-        return {"error": f"File {input_file} not found"}
-
-    target_time = parse_splunk_time(target_timestamp_str)
-    start_window = target_time - timedelta(minutes=5)
-    end_window = target_time + timedelta(minutes=5)
-
-    stats = {
-        "total_bytes": 0,
-        "bytes_in": 0,
-        "bytes_out": 0,
-        "packets_in": 0,
-        "packets_out": 0,
-        "protocols": {},
-        "flow_count": 0,
-        "durations": [],
-        "distinct_dest_ips": set()
-    }
-
+def get_filtered_lines(file_path, ioc):
     try:
-        with open(input_file, 'r') as f:
+        cmd = ["grep", ioc, file_path]
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True, encoding='utf-8', errors='ignore')
+        for line in proc.stdout: yield line
+        proc.wait()
+        if proc.returncode == 0: return
+    except Exception: pass
+    if os.path.exists(file_path):
+        with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
             for line in f:
-                try:
-                    record = json.loads(line)
-                    # Splunk export structure: usually {"result": {...}}
-                    data = record.get('result', record)
-                    
-                    # 1. Filter by IP
-                    if data.get('src_ip') != src_ip and data.get('dest_ip') != src_ip:
-                        continue
-                    
-                    # 2. Filter by Time Window
-                    current_time_str = data.get('timestamp') or data.get('_time')
-                    if not current_time_str:
-                        continue
-                    
-                    current_time = parse_splunk_time(current_time_str)
-                    if not (start_window <= current_time <= end_window):
-                        continue
+                if ioc in line: yield line
 
-                    # 3. Aggregate Features
-                    stats["flow_count"] += 1
-                    stats["total_bytes"] += int(data.get('bytes', 0))
-                    stats["bytes_in"] += int(data.get('bytes_in', 0))
-                    stats["bytes_out"] += int(data.get('bytes_out', 0))
-                    stats["packets_in"] += int(data.get('packets_in', 0))
-                    stats["packets_out"] += int(data.get('packets_out', 0))
-                    
-                    # Protocols (app)
-                    proto = data.get('app', data.get('protocol', 'unknown'))
-                    stats["protocols"][proto] = stats["protocols"].get(proto, 0) + 1
-                    
-                    # Destinations
-                    dest_ip = data.get('dest_ip')
-                    if dest_ip:
-                        stats["distinct_dest_ips"].add(dest_ip)
+def analyze_network(src_ip, target_timestamp_str, input_file="./.pi/data/network_streams_botsv1.json", window_minutes=5):
+    if not os.path.exists(input_file): return {"error": f"File {input_file} not found"}
+    target_time = parse_splunk_time(target_timestamp_str)
+    start_window = target_time - timedelta(minutes=window_minutes)
+    end_window = target_time + timedelta(minutes=window_minutes)
+    stats = {"total_bytes": 0, "bytes_in": 0, "bytes_out": 0, "packets_in": 0, "packets_out": 0, "protocols": {}, "flow_count": 0, "distinct_dest_ips": set()}
 
-                except (json.JSONDecodeError, ValueError):
-                    continue
-    except Exception as e:
-        return {"error": str(e)}
+    for line in get_filtered_lines(input_file, src_ip):
+        try:
+            record = json.loads(line)
+            data = record.get('result', record)
+            raw = data.get('_raw')
+            if raw and isinstance(raw, str) and raw.strip().startswith('{'):
+                try: data.update(json.loads(raw))
+                except Exception: pass
+            if data.get('src_ip') != src_ip and data.get('dest_ip') != src_ip: continue
+            current_time_str = data.get('timestamp') or data.get('_time')
+            if not current_time_str: continue
+            current_time = parse_splunk_time(current_time_str)
+            if not (start_window <= current_time <= end_window): continue
+            stats["flow_count"] += 1
+            stats["total_bytes"] += int(data.get('bytes', 0))
+            stats["bytes_in"] += int(data.get('bytes_in', 0))
+            stats["bytes_out"] += int(data.get('bytes_out', 0))
+            stats["packets_in"] += int(data.get('packets_in', 0))
+            stats["packets_out"] += int(data.get('packets_out', 0))
+            proto = data.get('app', data.get('protocol', 'unknown'))
+            stats["protocols"][proto] = stats["protocols"].get(proto, 0) + 1
+            dest_ip = data.get('dest_ip')
+            if dest_ip: stats["distinct_dest_ips"].add(dest_ip)
+        except Exception: continue
 
-    # Final calculations
-    avg_duration = 0 # Need time_taken or endtime - starttime logic if available
-    
     feature_vector = {
         "flow_count": stats["flow_count"],
         "total_volume_mb": round(stats["total_bytes"] / (1024*1024), 4),
         "in_out_ratio": round(stats["bytes_out"] / (stats["bytes_in"] + 1e-9), 4),
-        "packet_rate": round((stats["packets_in"] + stats["packets_out"]) / 600.0, 4), # Over 10 min window
+        "packet_rate": round((stats["packets_in"] + stats["packets_out"]) / (window_minutes * 120.0), 4),
         "distinct_protocols_count": len(stats["protocols"]),
         "distinct_dest_count": len(stats["distinct_dest_ips"]),
         "top_protocol": max(stats["protocols"], key=stats["protocols"].get) if stats["protocols"] else "none"
     }
-
-    summary = (f"Analysis of IP {src_ip} around {target_timestamp_str} shows {stats['flow_count']} flows. "
-               f"Total data: {feature_vector['total_volume_mb']} MB. "
-               f"Primary protocol observed: {feature_vector['top_protocol']}. "
-               f"The IP communicated with {feature_vector['distinct_dest_count']} distinct destinations.")
-
-    return {
-        "feature_vector": feature_vector,
-        "analysis_summary": summary
-    }
+    return {"feature_vector": feature_vector, "analysis_summary": f"Analyzed {stats['flow_count']} flows for {src_ip}."}
 
 if __name__ == "__main__":
-    if len(sys.argv) < 3:
-        print(json.dumps({"error": "Missing arguments. Usage: python analyze_network.py <src_ip> <timestamp> [input_file]"}))
-        sys.exit(1)
+    parser = argparse.ArgumentParser(description="Analyze network streams (Grep-First)")
+    parser.add_argument("--src-ip", required=True)
+    parser.add_argument("--target-timestamp", required=True)
+    parser.add_argument("--input-file", default="./.pi/data/network_streams_botsv1.json")
+    parser.add_argument("--output-file", default="./.pi/output/network_analyzer_result.json")
+    parser.add_argument("--window", type=int, default=5)
     
-    src_ip = sys.argv[1]
-    timestamp = sys.argv[2]
-    input_file = sys.argv[3] if len(sys.argv) > 3 else "input_data/network_streams_botsv1.json"
+    args = parser.parse_args()
+    result = analyze_network(args.src_ip, args.target_timestamp, args.input_file, args.window)
     
-    result = analyze_network(src_ip, timestamp, input_file)
-    print(json.dumps(result, indent=2))
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_file)), exist_ok=True)
+    with open(args.output_file, 'w') as f:
+        json.dump(result, f, indent=2)
+    
+    print(f"Network analysis complete. Results saved to {args.output_file}")

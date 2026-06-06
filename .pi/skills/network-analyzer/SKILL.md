@@ -1,35 +1,46 @@
 ---
 name: network-protocol-analyzer
-description: Analyzes multi-protocol network streams from BOTSv1 data to extract feature vectors for incident classification.
+description: High-performance network flow feature extraction using Grep-First filtering.
 parameters:
   src_ip:
     type: string
-    description: The source IP address to investigate.
+    description: "The source IP to analyze (usually the attacker)."
+    required: true
   target_timestamp:
     type: string
-    description: The timestamp of the alert in ISO format.
+    description: "Pivot timestamp in ISO/Splunk format."
+    required: true
+  window:
+    type: integer
+    description: "Search radius in minutes (+/-)."
+    default: 5
   input_file:
     type: string
-    description: Path to the network_streams_botsv1.json file.
-    default: "topic9-ir-orchestrator/.pi/data/network_streams_botsv1.json"
+    description: "Path to network stream logs."
+    default: "./.pi/data/network_streams_botsv1.json"
+  output_file:
+    type: string
+    description: "Path to save network result JSON."
+    default: "./.pi/output/network_analyzer_result.json"
 outputs:
   feature_vector:
     type: object
-    description: A dictionary of aggregated network features (volume, timing, protocols).
+    description: "Aggregated flow metrics (bytes, packets, ratios)."
   analysis_summary:
     type: string
-    description: A human-readable summary of the network behavior.
+    description: "Natural language summary of network behavior."
 ---
 
 # Network Protocol Analyzer Skill
 
-This skill processes raw network stream data from Splunk BOTSv1 (exported as JSON) to identify patterns of attack.
+## Execution Syntax
+```bash
+python3 ./.pi/skills/network-analyzer/analyze_network.py \
+  --src-ip "40.80.148.42" \
+  --target-timestamp "2016-08-10T15:36:48Z" \
+  --window 55 \
+  --output-file "./.pi/output/network_analyzer_result.json"
+```
 
-## Capabilities
-- **Time-Windowed Filtering:** Filters records within ±5 minutes of the alert.
-- **Protocol Aggregation:** Groups data by application (HTTP, DNS, TCP, etc.).
-- **Feature Engineering:** Computes throughput, packet counts, and flow duration.
-- **Exfiltration Detection:** Analyzes data volume ratios (bytes_out vs bytes_in).
-
-## Usage
-The skill is called by the `network-analyzer-agent` during Stage 1 of the IR pipeline.
+## Operational Constraints
+- **Relative Paths:** Always use relative paths starting with `./`.
