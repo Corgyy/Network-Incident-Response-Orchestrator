@@ -1,0 +1,67 @@
+# Network Incident Response Pipeline Chain
+# Chạy: pi chain run chain.yaml --var ioc=<manh_mối>
+
+name: network-ir-orchestrator-pipeline
+description: >
+  Quy trình phản hồi sự cố mạng: Triage -> Parallel Analysis (Recon/Log/Network) -> Reporting.
+
+vars:
+  ioc: "" # Người dùng nhập qua --var ioc=<manh_mối> khi chạy chain
+  alert_file: ".pi/data/alerts_trigger_botsv1.json"
+  sysmon_file: ".pi/data/sysmon_logs_botsv1.json"
+  network_file: ".pi/data/network_streams_botsv1.json"
+  output_dir: ".pi/output"
+
+steps:
+
+  # ── Bước 0: Triage - Xác định IP và Timeline ──────────────────────
+  - id: triage-step
+    type: single
+    skill: alert-triage-agent
+    prompt: >
+      Thực hiện Triage cho IOC: {{ioc}}.
+      Sử dụng file alert: {{alert_file}} và sysmon: {{sysmon_file}}.
+      Lưu kết quả vào {{output_dir}}/triage_context.json.
+
+  # ── Bước 1: Phân tích song song (Stage 1) ─────────────────────────
+  - id: parallel-investigation
+    type: parallel
+    depends_on:
+      - triage-step
+    agents:
+      - id: osint-recon
+        agent: agents/recon-agent.md
+        prompt: >
+          Thực hiện trinh sát OSINT cho Kẻ tấn công (attacker_ip) từ kết quả Triage.
+          IOC cần check: {{triage-step.outputs.triage_context.inferred_entities.attacker_ip}}.
+          Lưu kết quả vào {{output_dir}}/recon_result.json.
+
+      - id: host-investigation
+        agent: agents/log-collector-agent.md
+        prompt: >
+          Thu thập log Sysmon từ file {{sysmon_file}} dựa trên thông số:
+          {{triage-step.outputs.triage_context.next_steps_guide.log_collector_args}}.
+          Lưu kết quả vào {{output_dir}}/log_collector_result.json.
+
+      - id: network-investigation
+        agent: agents/network-agent.md
+        prompt: >
+          Phân tích luồng mạng từ file {{network_file}} dựa trên thông số:
+          {{triage-step.outputs.triage_context.next_steps_guide.network_analyzer_args}}.
+          Lưu kết quả vào {{output_dir}}/network_analyzer_result.json.
+
+  # ── Bước 2: Tổng hợp báo cáo (Stage 2) ────────────────────────────
+  - id: final-report
+    type: single
+    agent: agents/reporting-agent.md
+    prompt: >
+      Tạo báo cáo IR tổng hợp dựa trên:
+      1. Triage: {{output_dir}}/triage_context.json
+      2. OSINT: {{output_dir}}/recon_result.json
+      3. Host Logs: {{output_dir}}/log_collector_result.json
+      4. Network Flows: {{output_dir}}/network_analyzer_result.json
+      
+      Ánh xạ vào MITRE ATT&CK và đề xuất bước ngăn chặn.
+      Lưu báo cáo vào {{output_dir}}/IR_REPORT_{{ioc}}.md.
+    depends_on:
+      - parallel-investigation
