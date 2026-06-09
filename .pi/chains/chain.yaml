@@ -7,10 +7,10 @@ description: >
 
 vars:
   ioc: "" # Người dùng nhập qua --var ioc=<manh_mối> khi chạy chain
-  alert_file: ".pi/data/alerts_trigger_botsv1.json"
-  sysmon_file: ".pi/data/sysmon_logs_botsv1.json"
-  network_file: ".pi/data/network_streams_botsv1.json"
-  output_dir: ".pi/output"
+  alert_file: "./data/alerts_trigger_botsv1.json"
+  sysmon_file: "./data/sysmon_logs_botsv1.json"
+  network_file: "./data/network_streams_botsv1.json"
+  output_dir: "./reports"
 
 steps:
 

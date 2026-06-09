@@ -29,7 +29,7 @@ def get_filtered_lines(file_path, ioc):
             for line in f:
                 if ioc in line: yield line
 
-def analyze_network(src_ip, target_timestamp_str, input_file="./.pi/data/network_streams_botsv1.json", window_minutes=5):
+def analyze_network(src_ip, target_timestamp_str, input_file="./data/network_streams_botsv1.json", window_minutes=5):
     if not os.path.exists(input_file): return {"error": f"File {input_file} not found"}
     target_time = parse_splunk_time(target_timestamp_str)
     start_window = target_time - timedelta(minutes=window_minutes)
@@ -76,8 +76,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Analyze network streams (Grep-First)")
     parser.add_argument("--src-ip", required=True)
     parser.add_argument("--target-timestamp", required=True)
-    parser.add_argument("--input-file", default="./.pi/data/network_streams_botsv1.json")
-    parser.add_argument("--output-file", default="./.pi/output/network_analyzer_result.json")
+    parser.add_argument("--input-file", default="./data/network_streams_botsv1.json")
+    parser.add_argument("--output-file", default="./reports/network_analyzer_result.json")
     parser.add_argument("--window", type=int, default=5)
     
     args = parser.parse_args()

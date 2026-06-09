@@ -1,14 +1,14 @@
 ---
 name: recon-analyzer
-description: OSINT Intelligence - Automated reputation lookup for IP, Domain, or Hash via VirusTotal.
+description: Tình báo OSINT - Tự động tra cứu danh tiếng cho IP, Tên miền hoặc Mã băm qua VirusTotal.
 parameters:
   ioc:
     type: string
-    description: "The Indicator of Compromise (IP address, Domain name, or File Hash)."
+    description: "Chỉ số xâm nhập (Địa chỉ IP, Tên miền, hoặc Mã băm tệp)."
     required: true
   output:
     type: string
-    description: "Path to save OSINT result JSON."
+    description: "Đường dẫn lưu kết quả OSINT JSON."
     required: true
   vt_key:
     type: string
@@ -17,31 +17,31 @@ parameters:
 outputs:
   ioc_type:
     type: string
-    description: "Detected type (ip, domain, or hash)."
+    description: "Loại IOC được phát hiện (ip, domain, hoặc hash)."
   malicious_engines:
     type: integer
-    description: "Count of vendors flagging the IOC as malicious."
+    description: "Số lượng nhà cung cấp gắn cờ IOC là độc hại."
   is_malicious:
     type: boolean
-    description: "Final Boolean verdict."
+    description: "Phán quyết cuối cùng dưới dạng Boolean."
 ---
 
-# Recon Analyzer Skill (Synchronous)
+# Skill Phân tích Trinh sát (Đồng bộ)
 
-## Overview & Capabilities
-Provides external context to internal alerts using the **VirusTotal V3 API**.
-- **Auto-Detection Logic:** Uses robust Regex to distinguish between IPv4, Domains, and MD5/SHA256 hashes.
-- **Global Intelligence:** Fetches reputation scores and malicious detection stats from 70+ security vendors.
-- **Environment Compatibility:** Uses the `requests` library for synchronous execution without additional dependencies.
+## Tổng quan & Khả năng
+Cung cấp ngữ cảnh bên ngoài cho các cảnh báo nội bộ bằng cách sử dụng **VirusTotal V3 API**.
+- **Logic Tự động Phát hiện:** Sử dụng Regex mạnh mẽ để phân biệt giữa IPv4, Tên miền và các mã băm MD5/SHA256.
+- **Tình báo Toàn cầu:** Lấy điểm danh tiếng và thống kê phát hiện độc hại từ hơn 70 nhà cung cấp bảo mật.
+- **Tính tương thích Môi trường:** Sử dụng thư viện `requests` để thực thi đồng bộ mà không cần thêm phụ thuộc phức tạp.
 
-## Execution Syntax
+## Cú pháp Thực thi
 ```bash
 python3 ./.pi/skills/recon-analyzer/analyze_recon.py \
   --ioc "EC78C938D8453739CA2A370B9C275971EC46CAF6E479DE2B2D04E97CC47FA45D" \
-  --output "./.pi/output/recon_hash_result.json"
+  --output "./reports/recon_hash_result.json"
 ```
 
-## Output Schema
+## Cấu trúc Đầu ra
 ```json
 {
   "ioc": "...",
@@ -52,6 +52,6 @@ python3 ./.pi/skills/recon-analyzer/analyze_recon.py \
 }
 ```
 
-## Operational Constraints
-- **CRITICAL WARNING:** A result of 0 malicious engines does **NOT** mean the entity is safe. Many attackers use fresh infrastructure. You are **MANDATED** to continue the investigation into local logs (Triage & Collection) as per the IR Playbook. Never conclude an investigation based on this tool alone.
-- **API Limits:** Be mindful of your VirusTotal API quota (standard is 4 requests/min).
+## Ràng buộc Vận hành
+- **CẢNH BÁO NGHIÊM TRỌNG:** Kết quả có 0 công cụ độc hại **KHÔNG** có nghĩa là đối tượng đó an toàn. Nhiều kẻ tấn công sử dụng hạ tầng mới. Bạn **BẮT BUỘC** phải tiếp tục điều tra vào log nội bộ (Sàng lọc & Thu thập) theo Playbook IR. Không bao giờ kết luận điều tra chỉ dựa trên công cụ này.
+- **Giới hạn API:** Lưu ý hạn ngạch API VirusTotal của bạn (tiêu chuẩn là 4 yêu cầu/phút).

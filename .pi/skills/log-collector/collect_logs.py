@@ -35,7 +35,7 @@ def get_filtered_lines(file_path, keywords):
             for line in f:
                 if any(k.lower() in line.lower() for k in keywords): yield line
 
-def collect_logs(dest_ip, target_timestamp, window_minutes=5, input_file="./.pi/data/sysmon_logs_botsv1.json"):
+def collect_logs(dest_ip, target_timestamp, window_minutes=5, input_file="./data/sysmon_logs_botsv1.json"):
     if not os.path.exists(input_file): return {"error": f"File {input_file} not found"}
 
     target_time = parse_time(target_timestamp)
@@ -96,8 +96,8 @@ if __name__ == "__main__":
     parser.add_argument("--dest-ip", required=True)
     parser.add_argument("--target-timestamp", required=True)
     parser.add_argument("--window", type=int, default=5)
-    parser.add_argument("--input-file", default="./.pi/data/sysmon_logs_botsv1.json")
-    parser.add_argument("--output-file", default="./.pi/output/log_collector_result.json")
+    parser.add_argument("--input-file", default="./data/sysmon_logs_botsv1.json")
+    parser.add_argument("--output-file", default="./reports/log_collector_result.json")
     
     args = parser.parse_args()
     res = collect_logs(args.dest_ip, args.target_timestamp, args.window, args.input_file)

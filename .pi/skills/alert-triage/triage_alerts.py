@@ -78,8 +78,9 @@ def get_file_timerange(file_path):
 def main():
     parser = argparse.ArgumentParser(description="Alert Triage Agent - Step 0 (Standardized Paths)")
     parser.add_argument("--ioc", required=True, help="Indicator of compromise")
-    parser.add_argument("--alert-file", default="./.pi/data/alerts_trigger_botsv1.json", help="Path to alerts file")
-    parser.add_argument("--sysmon-file", default="./.pi/data/sysmon_logs_botsv1.json", help="Path to sysmon file")
+    parser.add_argument("--alert-file", default="./data/alerts_trigger_botsv1.json", help="Path to alerts file")
+    parser.add_argument("--sysmon-file", default="./data/sysmon_logs_botsv1.json", help="Path to sysmon file")
+    parser.add_argument("--output-file", default="./reports/triage_context.json", help="Path to save triage context JSON")
     args = parser.parse_args()
 
     ioc_lower = args.ioc.lower()
@@ -162,10 +163,16 @@ def main():
             "recommended_window_minutes": recommended_window
         },
         "next_steps_guide": {
-            "log_collector_args": f"--dest-ip {victim_ip} --target-timestamp \"{first_seen_str}\" --window {recommended_window}",
-            "network_analyzer_args": f"--src-ip {attacker_ip} --target-timestamp \"{first_seen_str}\" --window {recommended_window}"
+            "log_collector_args": f"--dest-ip {victim_ip} --target-timestamp \"{first_seen_str}\" --window {recommended_window} --output-file ./reports/log_collector_result.json",
+            "network_analyzer_args": f"--src-ip {attacker_ip} --target-timestamp \"{first_seen_str}\" --window {recommended_window} --output-file ./reports/network_analyzer_result.json"
         }
     }
+    
+    # Lưu kết quả vào file
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_file)), exist_ok=True)
+    with open(args.output_file, 'w', encoding='utf-8') as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+        
     print(json.dumps(output, indent=2))
 
 if __name__ == "__main__":
