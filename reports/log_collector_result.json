@@ -1,0 +1,11 @@
+{
+  "victim_ip": "192.168.250.70",
+  "time_window": "2016-08-10 14:41:48.130747+00:00 to 2016-08-10 16:31:48.130747+00:00",
+  "event_id_counter": {},
+  "suspicious_processes": [],
+  "suspicious_commands": [],
+  "network_connections": [],
+  "executable_evidence": [],
+  "hash_evidence": [],
+  "risk_level": "low"
+}
