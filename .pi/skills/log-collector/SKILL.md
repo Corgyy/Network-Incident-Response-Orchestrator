@@ -1,46 +1,46 @@
 ---
 name: log-collector
-description: Optimized Host-based forensic collection using Grep-First strategy.
+description: Thu thập bằng chứng máy chủ tối ưu sử dụng chiến lược Grep-First.
 parameters:
   dest_ip:
     type: string
-    description: "The victim IP address to investigate."
+    description: "Địa chỉ IP nạn nhân cần điều tra."
     required: true
   target_timestamp:
     type: string
-    description: "Pivot timestamp in ISO/Splunk format."
+    description: "Dấu thời gian gốc theo định dạng ISO/Splunk."
     required: true
   window:
     type: integer
-    description: "Search radius in minutes (+/-)."
+    description: "Bán kính tìm kiếm tính bằng phút (+/-)."
     default: 5
   input_file:
     type: string
-    description: "Path to Sysmon NDJSON logs."
-    default: "./.pi/data/sysmon_logs_botsv1.json"
+    description: "Đường dẫn đến log Sysmon NDJSON."
+    default: "./data/sysmon_logs_botsv1.json"
   output_file:
     type: string
-    description: "Path to save result JSON."
-    default: "./.pi/output/log_collector_result.json"
+    description: "Đường dẫn lưu kết quả JSON."
+    default: "./reports/log_collector_result.json"
 outputs:
   analysis_summary:
     type: string
-    description: "Human-readable summary of suspicious findings."
+    description: "Tóm tắt các phát hiện nghi vấn dưới dạng ngôn ngữ tự nhiên."
   risk_level:
     type: string
-    description: "Final risk assessment (high/low)."
+    description: "Đánh giá rủi ro cuối cùng (high/low)."
 ---
 
-# Log Collector Skill
+# Skill Thu thập Log
 
-## Execution Syntax
+## Cú pháp Thực thi
 ```bash
 python3 ./.pi/skills/log-collector/collect_logs.py \
   --dest-ip "192.168.250.70" \
   --target-timestamp "2016-08-10T15:36:48Z" \
   --window 60 \
-  --input-file "./.pi/data/sysmon_logs_botsv1.json"
+  --input-file "./data/sysmon_logs_botsv1.json"
 ```
 
-## Operational Constraints
-- **Default Paths:** Now points to `./.pi/data/sysmon_logs_botsv1.json`.
+## Ràng buộc Vận hành
+- **Đường dẫn Mặc định:** Hiện tại trỏ đến `./data/sysmon_logs_botsv1.json`.

@@ -1,46 +1,46 @@
 ---
 name: network-protocol-analyzer
-description: High-performance network flow feature extraction using Grep-First filtering.
+description: Trích xuất đặc trưng luồng mạng hiệu suất cao sử dụng bộ lọc Grep-First.
 parameters:
   src_ip:
     type: string
-    description: "The source IP to analyze (usually the attacker)."
+    description: "IP nguồn cần phân tích (thường là kẻ tấn công)."
     required: true
   target_timestamp:
     type: string
-    description: "Pivot timestamp in ISO/Splunk format."
+    description: "Dấu thời gian gốc theo định dạng ISO/Splunk."
     required: true
   window:
     type: integer
-    description: "Search radius in minutes (+/-)."
+    description: "Bán kính tìm kiếm tính bằng phút (+/-)."
     default: 5
   input_file:
     type: string
-    description: "Path to network stream logs."
-    default: "./.pi/data/network_streams_botsv1.json"
+    description: "Đường dẫn đến log network stream."
+    default: "./data/network_streams_botsv1.json"
   output_file:
     type: string
-    description: "Path to save network result JSON."
-    default: "./.pi/output/network_analyzer_result.json"
+    description: "Đường dẫn lưu kết quả mạng JSON."
+    default: "./reports/network_analyzer_result.json"
 outputs:
   feature_vector:
     type: object
-    description: "Aggregated flow metrics (bytes, packets, ratios)."
+    description: "Các số liệu luồng được tổng hợp (byte, gói tin, tỷ lệ)."
   analysis_summary:
     type: string
-    description: "Natural language summary of network behavior."
+    description: "Tóm tắt hành vi mạng dưới dạng ngôn ngữ tự nhiên."
 ---
 
-# Network Protocol Analyzer Skill
+# Skill Phân tích Giao thức Mạng
 
-## Execution Syntax
+## Cú pháp Thực thi
 ```bash
 python3 ./.pi/skills/network-analyzer/analyze_network.py \
   --src-ip "40.80.148.42" \
   --target-timestamp "2016-08-10T15:36:48Z" \
   --window 55 \
-  --output-file "./.pi/output/network_analyzer_result.json"
+  --output-file "./reports/network_analyzer_result.json"
 ```
 
-## Operational Constraints
-- **Relative Paths:** Always use relative paths starting with `./`.
+## Ràng buộc Vận hành
+- **Đường dẫn Tương đối:** Luôn sử dụng đường dẫn tương đối bắt đầu bằng `./`.

@@ -5,23 +5,35 @@ from collections import Counter
 from datetime import datetime, timezone
 
 def parse_time(value):
-    """Hàm chuẩn hóa thời gian về dạng datetime object"""
+    """Hàm chuẩn hóa thời gian về dạng datetime object - Hỗ trợ múi giờ"""
     if not value:
         return None
     value = str(value).strip().replace("Z", "+0000")
-    formats = [
-        "%Y-%m-%dT%H:%M:%S.%f%z",
-        "%Y-%m-%dT%H:%M:%S%z",
-        "%Y-%m-%d %H:%M:%S.%f%z",
-        "%Y-%m-%d %H:%M:%S%z",
-        "%Y-%m-%dT%H:%M:%S.%f",
-        "%Y-%m-%dT%H:%M:%S"
-    ]
-    for fmt in formats:
-        try:
-            return datetime.strptime(value[:32], fmt)
-        except ValueError:
-            continue
+    
+    # Hỗ trợ định dạng offset Splunk (+0700 -> +07:00)
+    if len(value) > 5 and (value[-5] in ['+', '-']) and value[-3] != ':':
+        value = value[:-2] + ":" + value[-2:]
+        
+    try:
+        # Sử dụng fromisoformat (Python 3.7+) rất mạnh mẽ
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo:
+            return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        formats = [
+            "%Y-%m-%d %H:%M:%S.%f",
+            "%Y-%m-%d %H:%M:%S",
+            "%Y-%m-%dT%H:%M:%S.%f",
+            "%Y-%m-%dT%H:%M:%S"
+        ]
+        for fmt in formats:
+            try:
+                # Fallback cho các định dạng không có offset
+                dt = datetime.strptime(value[:26] if '.' in value else value[:19], fmt)
+                return dt.replace(tzinfo=timezone.utc)
+            except ValueError:
+                continue
     return None
 
 def search_in_file(file_path, ioc_lower):
@@ -49,37 +61,32 @@ def search_in_file(file_path, ioc_lower):
     return matches
 
 def get_file_timerange(file_path):
-    """Lấy mốc thời gian bắt đầu và kết thúc của một file log để phát hiện lệch ngày"""
+    """Lấy mốc thời gian mẫu của file log để kiểm tra tính hợp lệ (Không giả định file đã sort)"""
     if not os.path.exists(file_path): return None, None
-    first_ts = None
-    last_ts = None
+    found_ts = []
     try:
         with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
-            # Lấy dòng đầu
-            first_line = f.readline()
-            if first_line:
-                data = json.loads(first_line).get('result', json.loads(first_line))
-                ts_str = data.get('timestamp') or data.get('_time') or data.get('UtcTime')
-                first_ts = parse_time(ts_str)
-            
-            # Lấy dòng cuối (seek)
-            f.seek(0, os.SEEK_END)
-            size = f.tell()
-            f.seek(max(0, size - 4096)) # Đọc 4KB cuối
-            lines = f.readlines()
-            if lines:
-                last_line = lines[-1]
-                data = json.loads(last_line).get('result', json.loads(last_line))
-                ts_str = data.get('timestamp') or data.get('_time') or data.get('UtcTime')
-                last_ts = parse_time(ts_str)
+            # Đọc 100 dòng đầu để lấy mẫu thời gian
+            for _ in range(100):
+                line = f.readline()
+                if not line: break
+                try:
+                    data = json.loads(line).get('result', json.loads(line))
+                    ts_str = data.get('timestamp') or data.get('_time') or data.get('UtcTime')
+                    ts_obj = parse_time(ts_str)
+                    if ts_obj: found_ts.append(ts_obj)
+                except: continue
     except Exception: pass
-    return first_ts, last_ts
+    
+    if not found_ts: return None, None
+    return min(found_ts), max(found_ts)
 
 def main():
     parser = argparse.ArgumentParser(description="Alert Triage Agent - Step 0 (Standardized Paths)")
     parser.add_argument("--ioc", required=True, help="Indicator of compromise")
-    parser.add_argument("--alert-file", default="./.pi/data/alerts_trigger_botsv1.json", help="Path to alerts file")
-    parser.add_argument("--sysmon-file", default="./.pi/data/sysmon_logs_botsv1.json", help="Path to sysmon file")
+    parser.add_argument("--alert-file", default="./data/alerts_trigger_botsv1.json", help="Path to alerts file")
+    parser.add_argument("--sysmon-file", default="./data/sysmon_logs_botsv1.json", help="Path to sysmon file")
+    parser.add_argument("--output-file", default="./reports/triage_context.json", help="Path to save triage context JSON")
     args = parser.parse_args()
 
     ioc_lower = args.ioc.lower()
@@ -162,10 +169,16 @@ def main():
             "recommended_window_minutes": recommended_window
         },
         "next_steps_guide": {
-            "log_collector_args": f"--dest-ip {victim_ip} --target-timestamp \"{first_seen_str}\" --window {recommended_window}",
-            "network_analyzer_args": f"--src-ip {attacker_ip} --target-timestamp \"{first_seen_str}\" --window {recommended_window}"
+            "log_collector_args": f"--dest-ip {victim_ip} --target-timestamp \"{first_seen_str}\" --window {recommended_window} --output-file ./reports/log_collector_result.json",
+            "network_analyzer_args": f"--src-ip {attacker_ip} --target-timestamp \"{first_seen_str}\" --window {recommended_window} --output-file ./reports/network_analyzer_result.json"
         }
     }
+    
+    # Lưu kết quả vào file
+    os.makedirs(os.path.dirname(os.path.abspath(args.output_file)), exist_ok=True)
+    with open(args.output_file, 'w', encoding='utf-8') as f:
+        json.dump(output, f, indent=2, ensure_ascii=False)
+        
     print(json.dumps(output, indent=2))
 
 if __name__ == "__main__":

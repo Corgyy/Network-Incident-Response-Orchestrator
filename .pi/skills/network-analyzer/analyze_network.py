@@ -6,15 +6,16 @@ import os
 from datetime import datetime, timedelta, timezone
 
 def parse_splunk_time(time_str):
+    if not time_str: return None
+    t_str = str(time_str).strip().replace('Z', '+00:00')
+    if len(t_str) > 5 and (t_str[-5] in ['+', '-']) and t_str[-3] != ':':
+        t_str = t_str[:-2] + ':' + t_str[-2:]
     try:
-        t_str = time_str.replace('Z', '+00:00')
-        if len(t_str) > 19 and t_str[-5] in ['+', '-'] and t_str[-3] != ':':
-            t_str = t_str[:-2] + ':' + t_str[-2:]
         dt = datetime.fromisoformat(t_str)
-        if dt.tzinfo: dt = dt.astimezone(timezone.utc)
+        if dt.tzinfo: return dt.astimezone(timezone.utc).replace(tzinfo=None)
         return dt.replace(tzinfo=None)
     except Exception:
-        return datetime.strptime(time_str[:19], "%Y-%m-%dT%H:%M:%S")
+        return datetime.strptime(t_str[:19], "%Y-%m-%dT%H:%M:%S")
 
 def get_filtered_lines(file_path, ioc):
     try:
@@ -29,7 +30,7 @@ def get_filtered_lines(file_path, ioc):
             for line in f:
                 if ioc in line: yield line
 
-def analyze_network(src_ip, target_timestamp_str, input_file="./.pi/data/network_streams_botsv1.json", window_minutes=5):
+def analyze_network(src_ip, target_timestamp_str, input_file="./data/network_streams_botsv1.json", window_minutes=5):
     if not os.path.exists(input_file): return {"error": f"File {input_file} not found"}
     target_time = parse_splunk_time(target_timestamp_str)
     start_window = target_time - timedelta(minutes=window_minutes)
@@ -76,8 +77,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Analyze network streams (Grep-First)")
     parser.add_argument("--src-ip", required=True)
     parser.add_argument("--target-timestamp", required=True)
-    parser.add_argument("--input-file", default="./.pi/data/network_streams_botsv1.json")
-    parser.add_argument("--output-file", default="./.pi/output/network_analyzer_result.json")
+    parser.add_argument("--input-file", default="./data/network_streams_botsv1.json")
+    parser.add_argument("--output-file", default="./reports/network_analyzer_result.json")
     parser.add_argument("--window", type=int, default=5)
     
     args = parser.parse_args()

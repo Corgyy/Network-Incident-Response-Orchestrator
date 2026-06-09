@@ -14,10 +14,18 @@ SUSPICIOUS_KEYWORDS = [
 def parse_time(value):
     if not value: return None
     value = str(value).strip().replace("Z", "+0000")
-    for fmt in ["%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S"]:
-        try:
-            return datetime.strptime(value[:26] if '.' in value else value[:19], fmt.split('%z')[0]).replace(tzinfo=timezone.utc)
-        except ValueError: continue
+    if len(value) > 5 and (value[-5] in ['+', '-']) and value[-3] != ':':
+        value = value[:-2] + ":" + value[-2:]
+    try:
+        dt = datetime.fromisoformat(value)
+        if dt.tzinfo: return dt.astimezone(timezone.utc)
+        return dt.replace(tzinfo=timezone.utc)
+    except ValueError:
+        for fmt in ["%Y-%m-%d %H:%M:%S.%f", "%Y-%m-%d %H:%M:%S", "%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S"]:
+            try:
+                dt = datetime.strptime(value[:26] if '.' in value else value[:19], fmt)
+                return dt.replace(tzinfo=timezone.utc)
+            except ValueError: continue
     return None
 
 def get_filtered_lines(file_path, keywords):
@@ -35,7 +43,7 @@ def get_filtered_lines(file_path, keywords):
             for line in f:
                 if any(k.lower() in line.lower() for k in keywords): yield line
 
-def collect_logs(dest_ip, target_timestamp, window_minutes=5, input_file="./.pi/data/sysmon_logs_botsv1.json"):
+def collect_logs(dest_ip, target_timestamp, window_minutes=5, input_file="./data/sysmon_logs_botsv1.json"):
     if not os.path.exists(input_file): return {"error": f"File {input_file} not found"}
 
     target_time = parse_time(target_timestamp)
@@ -59,9 +67,21 @@ def collect_logs(dest_ip, target_timestamp, window_minutes=5, input_file="./.pi/
             record = json.loads(line)
             data = record.get('result', record)
             raw = data.get('_raw')
-            if raw and isinstance(raw, str) and raw.strip().startswith('{'):
-                try: data.update(json.loads(raw))
-                except json.JSONDecodeError: pass
+            
+            # Extract fields from XML if necessary
+            if raw and isinstance(raw, str):
+                if raw.strip().startswith('{'):
+                    try: data.update(json.loads(raw))
+                    except json.JSONDecodeError: pass
+                elif '<Event' in raw:
+                    # Extract EventID
+                    eid_match = re.search(r'<EventID>(.*?)<\/EventID>', raw)
+                    if eid_match: data['EventID'] = eid_match.group(1)
+                    
+                    # Extract EventData fields
+                    for field in ['UtcTime', 'Image', 'CommandLine', 'User', 'SourceIp', 'DestinationIp', 'DestinationPort', 'Hashes']:
+                        f_match = re.search(f"<Data Name='{field}'>(.*?)<\/Data>", raw)
+                        if f_match: data[field] = f_match.group(1)
 
             ts_str = data.get('UtcTime') or data.get('timestamp') or data.get('_time')
             if not ts_str: continue
@@ -96,8 +116,8 @@ if __name__ == "__main__":
     parser.add_argument("--dest-ip", required=True)
     parser.add_argument("--target-timestamp", required=True)
     parser.add_argument("--window", type=int, default=5)
-    parser.add_argument("--input-file", default="./.pi/data/sysmon_logs_botsv1.json")
-    parser.add_argument("--output-file", default="./.pi/output/log_collector_result.json")
+    parser.add_argument("--input-file", default="./data/sysmon_logs_botsv1.json")
+    parser.add_argument("--output-file", default="./reports/log_collector_result.json")
     
     args = parser.parse_args()
     res = collect_logs(args.dest_ip, args.target_timestamp, args.window, args.input_file)

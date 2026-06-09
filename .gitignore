@@ -1,4 +1,8 @@
-# Ignore data content but keep the directory
+# Ignore large data files in the root data directory but keep the directory
+data/*.json
+!data/.gitkeep
+
+# Ignore data content in .pi but keep the directory
 .pi/data/*
 !.pi/data/.gitkeep
 
