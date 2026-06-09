@@ -1,9 +1,0 @@
-{
-    "agent_name": "Recon_VT_Only_Agent_V3",
-    "ioc": "40.80.148.42",
-    "ioc_type": "ip",
-    "malicious_engines": 0,
-    "vt_reputation_score": 0,
-    "country_code": "US",
-    "is_malicious": false
-}

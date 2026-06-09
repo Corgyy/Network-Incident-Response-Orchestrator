@@ -6,15 +6,16 @@ import os
 from datetime import datetime, timedelta, timezone
 
 def parse_splunk_time(time_str):
+    if not time_str: return None
+    t_str = str(time_str).strip().replace('Z', '+00:00')
+    if len(t_str) > 5 and (t_str[-5] in ['+', '-']) and t_str[-3] != ':':
+        t_str = t_str[:-2] + ':' + t_str[-2:]
     try:
-        t_str = time_str.replace('Z', '+00:00')
-        if len(t_str) > 19 and t_str[-5] in ['+', '-'] and t_str[-3] != ':':
-            t_str = t_str[:-2] + ':' + t_str[-2:]
         dt = datetime.fromisoformat(t_str)
-        if dt.tzinfo: dt = dt.astimezone(timezone.utc)
+        if dt.tzinfo: return dt.astimezone(timezone.utc).replace(tzinfo=None)
         return dt.replace(tzinfo=None)
     except Exception:
-        return datetime.strptime(time_str[:19], "%Y-%m-%dT%H:%M:%S")
+        return datetime.strptime(t_str[:19], "%Y-%m-%dT%H:%M:%S")
 
 def get_filtered_lines(file_path, ioc):
     try:
