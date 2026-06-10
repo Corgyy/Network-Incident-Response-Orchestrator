@@ -26,7 +26,7 @@ FEATURE_COLUMNS = [
 
 
 def load_json(path):
-    if not os.path.exists(path):
+    if not path or not os.path.exists(path):
         return {}
 
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
@@ -44,15 +44,12 @@ def extract_features_from_log(log_data):
     network_connections = log_data.get("network_connections", [])
     hash_evidence = log_data.get("hash_evidence", [])
 
-    text = json.dumps(log_data, ensure_ascii=False).lower()
-
     feature_vector = {
         "suspicious_command_count": len(suspicious_commands),
         "executable_evidence_count": len(executable_evidence),
         "network_connection_count": len(network_connections),
         "hash_evidence_count": len(hash_evidence),
 
-        # These values can be overwritten if a network analyzer result is provided later.
         "http_count": 0,
         "dns_count": 0,
         "smb_count": 0,
@@ -117,17 +114,13 @@ def extract_features_from_log(log_data):
 
 
 def merge_network_features(feature_vector, network_data):
-    """
-    Optional: merge fields from network analyzer output if available.
-    This function is flexible because teammate's network output format may be different.
-    """
     if not network_data:
         return feature_vector
 
     if "feature_vector" in network_data and isinstance(network_data["feature_vector"], dict):
         network_data = {**network_data, **network_data["feature_vector"]}
 
-    # Support current Network Analyzer schema
+    # Current Network Analyzer schema support
     if isinstance(network_data.get("flow_count"), (int, float)):
         feature_vector["network_connection_count"] = max(
             feature_vector.get("network_connection_count", 0),
@@ -161,6 +154,7 @@ def merge_network_features(feature_vector, network_data):
             int(network_data.get("flow_count", 0))
         )
 
+    # Flexible schema support
     possible_mapping = {
         "http_count": ["http_count", "http_requests", "total_http"],
         "dns_count": ["dns_count", "dns_queries", "total_dns"],
@@ -181,76 +175,41 @@ def merge_network_features(feature_vector, network_data):
     return feature_vector
 
 
-def predict_anomaly(feature_vector, model_file):
+def predict_incident_type(feature_vector, model_file):
     if not os.path.exists(model_file):
         raise FileNotFoundError(f"Model file not found: {model_file}")
 
     bundle = joblib.load(model_file)
 
     model = bundle["model"]
-    scaler = bundle["scaler"]
     feature_columns = bundle["feature_columns"]
+    model_type = bundle.get("model_type", "RandomForestClassifier")
 
     row = pd.DataFrame(
         [[feature_vector.get(col, 0) for col in feature_columns]],
-        columns=feature_columns
+        columns=feature_columns,
     )
 
-    row_scaled = scaler.transform(row)
+    predicted_label = str(model.predict(row)[0])
 
-    raw_prediction = int(model.predict(row_scaled)[0])
-    anomaly_score = float(model.decision_function(row_scaled)[0])
+    confidence = None
+    probabilities = {}
 
-    if raw_prediction == -1:
-        anomaly_label = "anomaly"
-    else:
-        anomaly_label = "normal"
+    if hasattr(model, "predict_proba"):
+        proba = model.predict_proba(row)[0]
+        classes = model.classes_
 
-    return anomaly_label, anomaly_score
+        probabilities = {
+            str(label): round(float(prob), 6)
+            for label, prob in zip(classes, proba)
+        }
 
+        confidence = round(float(max(proba)), 6)
 
-def label_incident_type(feature_vector, log_data):
-    """
-    IsolationForest only detects anomaly/normal.
-    This rule layer assigns the incident type based on evidence.
-    """
-    text = json.dumps(log_data, ensure_ascii=False).lower()
-
-    if (
-        feature_vector["has_webroot_executable"] == 1
-        and feature_vector["has_cmd_execution"] == 1
-    ):
-        return "Web Shell Malware Execution"
-
-    if (
-        feature_vector["suspicious_command_count"] >= 5
-        or feature_vector["has_powershell"] == 1
-        or feature_vector["has_encoded_command"] == 1
-    ):
-        return "Malware Execution"
-
-    if feature_vector["http_count"] >= 300:
-        return "Brute Force"
-
-    if (
-        feature_vector["unique_dest_ip_count"] >= 40
-        or feature_vector["external_connection_count"] >= 30
-    ):
-        return "Reconnaissance"
-
-    if feature_vector["dns_count"] >= 60:
-        return "DNS Anomaly"
-
-    if feature_vector["smb_count"] >= 20:
-        return "Suspicious Internal Activity"
-
-    if "dns" in text and feature_vector["suspicious_command_count"] == 0:
-        return "Network Anomaly"
-
-    return "Benign Low Risk"
+    return predicted_label, confidence, probabilities, model_type
 
 
-def estimate_severity(anomaly_label, anomaly_score, incident_type, feature_vector):
+def estimate_severity(predicted_incident_type, classification_confidence, feature_vector):
     high_types = [
         "Web Shell Malware Execution",
         "Malware Execution",
@@ -266,20 +225,19 @@ def estimate_severity(anomaly_label, anomaly_score, incident_type, feature_vecto
         "Network Anomaly",
     ]
 
-    if incident_type in high_types:
+    if predicted_incident_type in high_types:
         return "high"
 
-    if incident_type in medium_types:
-        if (
-            anomaly_label == "anomaly"
-            or feature_vector.get("network_connection_count", 0) >= 10
-            or feature_vector.get("dns_count", 0) >= 10
-            or feature_vector.get("smb_count", 0) >= 10
-            or feature_vector.get("external_connection_count", 0) >= 5
-        ):
-            return "medium"
+    if feature_vector.get("bytes_out", 0) >= 200 * 1024 * 1024:
+        return "high"
 
-    if anomaly_label == "anomaly":
+    if feature_vector.get("suspicious_command_count", 0) >= 20:
+        return "high"
+
+    if predicted_incident_type in medium_types:
+        return "medium"
+
+    if feature_vector.get("network_connection_count", 0) >= 100:
         return "medium"
 
     return "low"
@@ -310,22 +268,13 @@ def build_evidence_used(log_data):
 
     if network_connections:
         evidence.append(
-            f"Victim-related network connections: {len(network_connections)}"
+            f"Victim-related network connections from Log Collector: {len(network_connections)}"
         )
 
     return evidence
 
 
-def map_mitre(incident_type, feature_vector, log_data):
-    """
-    Map incident evidence to MITRE ATT&CK techniques.
-
-    This function combines:
-    - Log Collector evidence: command execution, PowerShell, webroot executable, web shell indicators.
-    - Network Analyzer evidence: high flow count, outbound volume, DNS/SMB/HTTP activity, destination diversity.
-
-    The mapping is evidence-based and confidence-based.
-    """
+def map_mitre(predicted_incident_type, feature_vector, log_data):
     mappings = []
     text = json.dumps(log_data, ensure_ascii=False).lower()
 
@@ -348,19 +297,25 @@ def map_mitre(incident_type, feature_vector, log_data):
     dns_count = feature_vector.get("dns_count", 0)
     smb_count = feature_vector.get("smb_count", 0)
     unique_dest_ip_count = feature_vector.get("unique_dest_ip_count", 0)
-    external_connection_count = feature_vector.get("external_connection_count", 0)
     bytes_out = feature_vector.get("bytes_out", 0)
-    bytes_in = feature_vector.get("bytes_in", 0)
 
     has_webroot_executable = feature_vector.get("has_webroot_executable", 0)
     has_cmd_execution = feature_vector.get("has_cmd_execution", 0)
     has_powershell = feature_vector.get("has_powershell", 0)
     has_encoded_command = feature_vector.get("has_encoded_command", 0)
 
-    # =========================================================
-    # 1. Execution - Command and Script Execution
-    # =========================================================
+    # Initial Access
+    if has_webroot_executable == 1 or "\\inetpub\\" in text or "\\wwwroot\\" in text or "\\joomla\\" in text:
+        add(
+            "T1190",
+            "Exploit Public-Facing Application",
+            "Initial Access",
+            "Suspicious activity is associated with a public web application or webroot directory.",
+            "medium",
+            "log_collector",
+        )
 
+    # Execution
     if has_cmd_execution == 1 or "cmd.exe" in text:
         add(
             "T1059",
@@ -381,6 +336,28 @@ def map_mitre(incident_type, feature_vector, log_data):
             "log_collector",
         )
 
+    if executable_evidence_count >= 1 and hash_evidence_count >= 1:
+        add(
+            "T1204.002",
+            "Malicious File",
+            "Execution",
+            "Executable and hash evidence were observed, suggesting malicious file execution.",
+            "medium",
+            "log_collector",
+        )
+
+    # Persistence
+    if has_webroot_executable == 1 or "3791.exe" in text or "\\wwwroot\\" in text or "\\joomla\\" in text:
+        add(
+            "T1505.003",
+            "Web Shell",
+            "Persistence",
+            "Executable or command execution evidence was found under a webroot/Joomla path.",
+            "high",
+            "log_collector",
+        )
+
+    # Defense Evasion
     if has_encoded_command == 1 or "encodedcommand" in text or " -enc" in text:
         add(
             "T1027",
@@ -396,39 +373,12 @@ def map_mitre(incident_type, feature_vector, log_data):
             "T1218",
             "System Binary Proxy Execution",
             "Defense Evasion",
-            "Windows signed binaries such as rundll32/regsvr32/script interpreters were observed in suspicious execution context.",
+            "Windows signed binaries such as rundll32/regsvr32/script interpreters were observed.",
             "medium",
             "log_collector",
         )
 
-    # =========================================================
-    # 2. Persistence - Web Shell / Web Server Compromise
-    # =========================================================
-
-    if has_webroot_executable == 1 or "3791.exe" in text or "\\wwwroot\\" in text or "\\joomla\\" in text:
-        add(
-            "T1505.003",
-            "Web Shell",
-            "Persistence",
-            "Executable or command execution evidence was found under a webroot/Joomla path, indicating possible web shell activity.",
-            "high",
-            "log_collector",
-        )
-
-    if "\\inetpub\\" in text or "\\wwwroot\\" in text or "\\joomla\\" in text:
-        add(
-            "T1190",
-            "Exploit Public-Facing Application",
-            "Initial Access",
-            "Suspicious activity is associated with a public web application directory, suggesting possible exploitation of a web-facing service.",
-            "medium",
-            "log_collector",
-        )
-
-    # =========================================================
-    # 3. Discovery
-    # =========================================================
-
+    # Discovery
     if any(cmd in text for cmd in ["whoami", "tasklist", "ipconfig", "net.exe", "net user", "net group"]):
         add(
             "T1087",
@@ -444,34 +394,48 @@ def map_mitre(incident_type, feature_vector, log_data):
             "T1046",
             "Network Service Discovery",
             "Discovery",
-            "High number of unique destination IPs may indicate network service discovery or scanning behavior.",
+            "High number of unique destination IPs may indicate network service discovery.",
             "medium",
             "network_analyzer",
         )
 
-    if network_connection_count >= 5000 and unique_dest_ip_count >= 10:
+    # Lateral Movement
+    if smb_count >= 5:
         add(
-            "T1046",
-            "Network Service Discovery",
-            "Discovery",
-            "Large flow count combined with multiple destinations suggests scanning or discovery activity.",
-            "high",
+            "T1021",
+            "Remote Services",
+            "Lateral Movement",
+            "SMB or remote-service-like traffic was observed in the network feature vector.",
+            "medium",
             "network_analyzer",
         )
 
-    # =========================================================
-    # 4. Command and Control
-    # =========================================================
+    if smb_count >= 20:
+        add(
+            "T1021.002",
+            "SMB/Windows Admin Shares",
+            "Lateral Movement",
+            "High SMB activity may indicate Windows admin shares or lateral movement.",
+            "medium",
+            "network_analyzer",
+        )
 
+    # Command and Control
     if (
-        incident_type in ["Network Anomaly", "DNS Anomaly", "Web Shell Malware Execution", "Malware Execution"]
+        predicted_incident_type in [
+            "Network Anomaly",
+            "DNS Anomaly",
+            "Web Shell Malware Execution",
+            "Malware Execution",
+            "C2 Communication",
+        ]
         and network_connection_count >= 100
     ):
         add(
             "T1071",
             "Application Layer Protocol",
             "Command and Control",
-            "High network flow count was observed, suggesting possible application-layer command and control or abnormal network communication.",
+            "High network flow count was observed, suggesting possible application-layer C2 or abnormal communication.",
             "medium",
             "network_analyzer",
         )
@@ -496,34 +460,7 @@ def map_mitre(incident_type, feature_vector, log_data):
             "network_analyzer",
         )
 
-    # =========================================================
-    # 5. Lateral Movement
-    # =========================================================
-
-    if smb_count >= 5:
-        add(
-            "T1021",
-            "Remote Services",
-            "Lateral Movement",
-            "SMB or remote-service-like traffic was observed in the network feature vector.",
-            "medium",
-            "network_analyzer",
-        )
-
-    if smb_count >= 20:
-        add(
-            "T1021.002",
-            "SMB/Windows Admin Shares",
-            "Lateral Movement",
-            "High SMB activity may indicate access through Windows admin shares or lateral movement.",
-            "medium",
-            "network_analyzer",
-        )
-
-    # =========================================================
-    # 6. Exfiltration
-    # =========================================================
-
+    # Exfiltration
     if bytes_out >= 50 * 1024 * 1024:
         add(
             "T1041",
@@ -544,82 +481,29 @@ def map_mitre(incident_type, feature_vector, log_data):
             "network_analyzer",
         )
 
-    # =========================================================
-    # 7. Defense Evasion / Impact
-    # =========================================================
+    # Credential Access
+    if predicted_incident_type == "Brute Force":
+        add(
+            "T1110",
+            "Brute Force",
+            "Credential Access",
+            "The ML classifier predicted brute-force incident behavior.",
+            "medium",
+            "ml_classifier",
+        )
 
+    # Impact
     if "vssadmin" in text:
         add(
             "T1490",
             "Inhibit System Recovery",
             "Impact",
-            "vssadmin usage was observed, which may indicate deletion of shadow copies or recovery inhibition.",
+            "vssadmin usage was observed, which may indicate recovery inhibition.",
             "medium",
             "log_collector",
         )
 
-    if "certutil" in text:
-        add(
-            "T1105",
-            "Ingress Tool Transfer",
-            "Command and Control",
-            "certutil usage was observed, which may indicate file download or tool transfer activity.",
-            "medium",
-            "log_collector",
-        )
-
-    if "bitsadmin" in text or "invoke-webrequest" in text or "downloadstring" in text:
-        add(
-            "T1105",
-            "Ingress Tool Transfer",
-            "Command and Control",
-            "Download-related command activity was observed.",
-            "medium",
-            "log_collector",
-        )
-
-    # =========================================================
-    # 8. Credential Access / Brute Force
-    # =========================================================
-
-    if incident_type == "Brute Force":
-        add(
-            "T1110",
-            "Brute Force",
-            "Credential Access",
-            "Incident was labeled as brute-force behavior.",
-            "medium",
-            "ml_classifier",
-        )
-
-    # =========================================================
-    # 9. Generic malware execution fallback
-    # =========================================================
-
-    if incident_type == "Malware Execution" and suspicious_command_count >= 5:
-        add(
-            "T1204",
-            "User Execution",
-            "Execution",
-            "Multiple suspicious process executions were observed and classified as malware execution.",
-            "low",
-            "ml_classifier",
-        )
-
-    if executable_evidence_count >= 1 and hash_evidence_count >= 1:
-        add(
-            "T1204.002",
-            "Malicious File",
-            "Execution",
-            "Executable and hash evidence were observed, suggesting malicious file execution.",
-            "medium",
-            "log_collector",
-        )
-
-    # =========================================================
     # Deduplicate by technique_id, keep highest confidence
-    # =========================================================
-
     confidence_rank = {
         "low": 1,
         "medium": 2,
@@ -641,7 +525,6 @@ def map_mitre(incident_type, feature_vector, log_data):
         if new_conf > old_conf:
             deduped[tid] = item
 
-    # Sort for cleaner report
     tactic_order = {
         "Initial Access": 1,
         "Execution": 2,
@@ -678,37 +561,48 @@ def classify_incident(log_file, network_file, model_file, output_file):
     feature_vector = extract_features_from_log(log_data)
     feature_vector = merge_network_features(feature_vector, network_data)
 
-    anomaly_label, anomaly_score = predict_anomaly(feature_vector, model_file)
-    incident_type = label_incident_type(feature_vector, log_data)
+    predicted_incident_type, confidence, probabilities, model_type = predict_incident_type(
+        feature_vector,
+        model_file,
+    )
+
     severity = estimate_severity(
-        anomaly_label,
-        anomaly_score,
-        incident_type,
+        predicted_incident_type,
+        confidence,
         feature_vector,
     )
 
-    mitre_mapping = map_mitre(incident_type, feature_vector, log_data)
+    mitre_mapping = map_mitre(
+        predicted_incident_type,
+        feature_vector,
+        log_data,
+    )
+
     evidence_used = build_evidence_used(log_data)
 
     result = {
         "agent": "ml_classifier",
-        "model": "IsolationForest",
+        "model": model_type,
         "input_sources": {
             "log_file": log_file,
             "network_file": network_file if network_file and os.path.exists(network_file) else None,
             "model_file": model_file,
         },
-        "anomaly_label": anomaly_label,
-        "anomaly_score": round(anomaly_score, 6),
-        "predicted_incident_type": incident_type,
+        "predicted_incident_type": predicted_incident_type,
+        "classification_confidence": confidence,
+        "class_probabilities": probabilities,
         "severity": severity,
         "feature_vector": feature_vector,
         "evidence_used": evidence_used,
         "mitre_mapping": mitre_mapping,
         "summary": (
-            f"IsolationForest classified the feature vector as {anomaly_label} "
-            f"(score={anomaly_score:.4f}). The incident type is labeled as "
-            f"{incident_type} with {severity} severity. "
+            f"RandomForest classified this alert as {predicted_incident_type} "
+            f"with confidence={confidence}. The classification used a combined feature vector "
+            f"from Log Collector and Network Analyzer outputs. "
+            f"Log Collector contributed host/process evidence such as suspicious commands, "
+            f"executable evidence, hashes, webroot execution, cmd.exe and PowerShell indicators. "
+            f"Network Analyzer contributed network telemetry such as flow count, unique destinations, "
+            f"and outbound bytes. Severity is {severity}. "
             f"{len(mitre_mapping)} MITRE ATT&CK technique(s) were mapped."
         ),
     }
@@ -719,9 +613,9 @@ def classify_incident(log_file, network_file, model_file, output_file):
         json.dump(result, f, indent=2, ensure_ascii=False)
 
     print("ML incident classification completed.")
-    print(f"Anomaly label: {anomaly_label}")
-    print(f"Anomaly score: {anomaly_score:.4f}")
-    print(f"Predicted incident type: {incident_type}")
+    print(f"Model: {model_type}")
+    print(f"Predicted incident type: {predicted_incident_type}")
+    print(f"Classification confidence: {confidence}")
     print(f"Severity: {severity}")
     print(f"MITRE mappings: {len(mitre_mapping)}")
     print(f"Output saved to: {output_file}")
@@ -729,31 +623,31 @@ def classify_incident(log_file, network_file, model_file, output_file):
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Classify incident using IsolationForest and MITRE mapping."
+        description="Classify incident type using RandomForest and MITRE mapping."
     )
 
     parser.add_argument(
         "--log-file",
         default="./reports/log_collector_result.json",
-        help="Path to Log Collector JSON output."
+        help="Path to Log Collector JSON output.",
     )
 
     parser.add_argument(
         "--network-file",
         default="",
-        help="Optional path to Network Analyzer JSON output."
+        help="Optional path to Network Analyzer JSON output.",
     )
 
     parser.add_argument(
         "--model-file",
-        default="./.pi/models/isolation_forest_model.pkl",
-        help="Path to trained IsolationForest model."
+        default="./.pi/models/random_forest_incident_classifier.pkl",
+        help="Path to trained RandomForest model.",
     )
 
     parser.add_argument(
         "--output-file",
         default="./reports/ml_classification_result.json",
-        help="Path to save ML classification result."
+        help="Path to save ML classification result.",
     )
 
     args = parser.parse_args()

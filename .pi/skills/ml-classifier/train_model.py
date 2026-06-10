@@ -4,8 +4,9 @@ import os
 
 import joblib
 import pandas as pd
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import accuracy_score, classification_report
+from sklearn.model_selection import train_test_split
 
 
 FEATURE_COLUMNS = [
@@ -27,7 +28,7 @@ FEATURE_COLUMNS = [
 ]
 
 
-def train_model(training_file, model_file, report_file, contamination):
+def train_model(training_file, model_file, report_file):
     if not os.path.exists(training_file):
         raise FileNotFoundError(f"Training file not found: {training_file}")
 
@@ -37,98 +38,136 @@ def train_model(training_file, model_file, report_file, contamination):
     if missing_columns:
         raise ValueError(f"Missing feature columns in training data: {missing_columns}")
 
+    if "label" not in df.columns:
+        raise ValueError("Training data must contain a 'label' column.")
+
     X = df[FEATURE_COLUMNS].fillna(0)
+    y = df["label"].fillna("Unknown")
 
-    scaler = StandardScaler()
-    X_scaled = scaler.fit_transform(X)
+    label_counts = y.value_counts()
+    can_stratify = label_counts.min() >= 2
 
-    model = IsolationForest(
-        n_estimators=200,
-        contamination=contamination,
-        random_state=42
+    if can_stratify:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X,
+            y,
+            test_size=0.25,
+            random_state=42,
+            stratify=y,
+        )
+    else:
+        X_train, X_test, y_train, y_test = train_test_split(
+            X,
+            y,
+            test_size=0.25,
+            random_state=42,
+        )
+
+    model = RandomForestClassifier(
+        n_estimators=300,
+        max_depth=None,
+        random_state=42,
+        class_weight="balanced",
     )
 
-    model.fit(X_scaled)
+    model.fit(X_train, y_train)
 
-    predictions = model.predict(X_scaled)
-    scores = model.decision_function(X_scaled)
+    y_pred = model.predict(X_test)
+    accuracy = accuracy_score(y_test, y_pred)
 
-    anomaly_count = int((predictions == -1).sum())
-    normal_count = int((predictions == 1).sum())
+    labels = sorted(y.unique().tolist())
 
-    os.makedirs(os.path.dirname(model_file), exist_ok=True)
+    feature_importance = [
+        {
+            "feature": feature,
+            "importance": round(float(importance), 6),
+        }
+        for feature, importance in zip(FEATURE_COLUMNS, model.feature_importances_)
+    ]
+
+    feature_importance = sorted(
+        feature_importance,
+        key=lambda x: x["importance"],
+        reverse=True,
+    )
+
+    os.makedirs(os.path.dirname(os.path.abspath(model_file)), exist_ok=True)
 
     joblib.dump(
         {
             "model": model,
-            "scaler": scaler,
             "feature_columns": FEATURE_COLUMNS,
-            "model_type": "IsolationForest",
-            "contamination": contamination,
+            "model_type": "RandomForestClassifier",
+            "labels": labels,
         },
-        model_file
+        model_file,
     )
 
     report = {
         "agent": "ml_classifier",
-        "model": "IsolationForest",
+        "model": "RandomForestClassifier",
         "training_file": training_file,
         "model_file": model_file,
-        "total_training_rows": len(df),
+        "total_training_rows": int(len(df)),
+        "train_rows": int(len(X_train)),
+        "test_rows": int(len(X_test)),
         "feature_columns": FEATURE_COLUMNS,
-        "contamination": contamination,
-        "normal_count": normal_count,
-        "anomaly_count": anomaly_count,
-        "score_min": float(scores.min()),
-        "score_max": float(scores.max()),
-        "score_mean": float(scores.mean()),
-        "labels_in_training_file": sorted(df["label"].unique().tolist()) if "label" in df.columns else [],
+        "labels": labels,
+        "label_distribution": {
+            label: int(count) for label, count in y.value_counts().items()
+        },
+        "accuracy": round(float(accuracy), 4),
+        "classification_report": classification_report(
+            y_test,
+            y_pred,
+            zero_division=0,
+            output_dict=True,
+        ),
+        "feature_importance": feature_importance,
         "note": (
-            "IsolationForest is used for anomaly detection on incident feature vectors. "
-            "It detects whether an incident looks normal or anomalous. "
-            "The final incident type will be assigned later by rule-based labeling based on evidence."
-        )
+            "RandomForestClassifier is used to classify incident type from "
+            "feature vectors extracted by Log Collector and Network Analyzer. "
+            "The input alert is already suspicious; ML is used to classify what "
+            "type of incident it is, not to detect whether an alert exists."
+        ),
     }
 
-    os.makedirs(os.path.dirname(report_file), exist_ok=True)
+    os.makedirs(os.path.dirname(os.path.abspath(report_file)), exist_ok=True)
 
     with open(report_file, "w", encoding="utf-8") as f:
         json.dump(report, f, indent=2, ensure_ascii=False)
 
-    print("IsolationForest training completed.")
+    print("RandomForest training completed.")
     print(f"Training file: {training_file}")
     print(f"Model saved to: {model_file}")
     print(f"Training report saved to: {report_file}")
-    print(f"Normal samples: {normal_count}")
-    print(f"Anomaly samples: {anomaly_count}")
+    print(f"Accuracy: {accuracy:.4f}")
+    print("Labels:")
+    for label in labels:
+        print(f"  - {label}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train IsolationForest incident anomaly detector.")
+    parser = argparse.ArgumentParser(
+        description="Train RandomForest incident type classifier."
+    )
 
     parser.add_argument(
         "--training-file",
-        default="./.pi/data/training_incidents.csv",
-        help="Path to training CSV file."
+        default="./data/training_incidents.csv",
+        help="Path to training CSV file.",
     )
 
     parser.add_argument(
         "--model-file",
-        default="./.pi/models/isolation_forest_model.pkl",
-        help="Path to save trained IsolationForest model."
+        default="./.pi/models/random_forest_incident_classifier.pkl",
+        help="Path to save trained RandomForest model.",
     )
 
     parser.add_argument(
         "--report-file",
         default="./reports/ml_training_report.json",
-        help="Path to save training report."
-    )
-
-    parser.add_argument(
-        "--contamination",
-        type=float,
-        default=0.25,
-        help="Expected anomaly ratio in training data."
+        help="Path to save training report.",
     )
 
     args = parser.parse_args()
@@ -137,7 +176,6 @@ def main():
         training_file=args.training_file,
         model_file=args.model_file,
         report_file=args.report_file,
-        contamination=args.contamination
     )
 
 
