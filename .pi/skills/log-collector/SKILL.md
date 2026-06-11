@@ -35,7 +35,7 @@ outputs:
 
 ## Cú pháp Thực thi
 ```bash
-python3 ./.pi/skills/log-collector/collect_logs.py \
+python ./.pi/skills/log-collector/collect_logs.py \
   --dest-ip "192.168.250.70" \
   --target-timestamp "2016-08-10T15:36:48Z" \
   --window 60 \
