@@ -1,0 +1,12 @@
+{
+  "suspicious_keywords": [
+    "powershell", "cmd.exe", "certutil", "rundll32", "regsvr32", "wscript", 
+    "schtasks", "wmic", "bitsadmin", "net.exe", "whoami", "tasklist", "vssadmin"
+  ],
+  "default_paths": {
+    "alerts": "./data/alerts_trigger_botsv1.json",
+    "sysmon": "./data/sysmon_logs_botsv1.json",
+    "network": "./data/network_streams_botsv1.json",
+    "reports_dir": "./reports"
+  }
+}

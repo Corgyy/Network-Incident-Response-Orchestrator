@@ -1,0 +1,91 @@
+# Network Incident Response Pipeline Chain
+# Chạy: pi chain run chain.yaml --var ioc=<manh_mối>
+
+name: network-ir-orchestrator-pipeline
+description: >
+  Quy trình phản hồi sự cố mạng: Triage -> Initial Recon -> Parallel Analysis (Log/Network) -> Pivot Recon -> Reporting.
+
+vars:
+  ioc: "" 
+  alert_file: "" 
+  sysmon_file: "" 
+  network_file: "" 
+  output_dir: "./reports"
+
+steps:
+
+  # ── Bước 0: Triage - Xác định IP và Timeline ──────────────────────
+  - id: triage-step
+    type: single
+    skill: alert-triage
+    prompt: >
+      Thực hiện Triage cho IOC: {{ioc}}.
+      Sử dụng file alert: {{alert_file}} và sysmon: {{sysmon_file}}.
+      Lưu kết quả vào {{output_dir}}/triage_context.json.
+
+  # ── Bước 1: Trinh sát mục tiêu ban đầu (Initial Recon) ────────────
+  - id: recon-step
+    type: single
+    agent: agents/recon-agent.md
+    depends_on:
+      - triage-step
+    prompt: >
+      Thực hiện trinh sát OSINT cho Kẻ tấn công.
+      Tham số: --ioc {{triage-step.outputs.triage_context.inferred_entities.attacker_ip}} --output {{output_dir}}/recon_result.json.
+
+  # ── Bước 2: Thu thập bằng chứng (Parallel Evidence Collection) ────
+  - id: evidence-collection-step
+    type: parallel
+    depends_on:
+      - recon-step
+    agents:
+      - id: host-investigation
+        agent: agents/log-collector-agent.md
+        prompt: >
+          Thu thập log Sysmon. 
+          SỬ DỤNG CHÍNH XÁC CÁC THAM SỐ SAU: {{triage-step.outputs.triage_context.next_steps_guide.log_collector_args}}.
+
+      - id: network-investigation
+        agent: agents/network-agent.md
+        prompt: >
+          Phân tích luồng mạng.
+          SỬ DỤNG CHÍNH XÁC CÁC THAM SỐ SAU: {{triage-step.outputs.triage_context.next_steps_guide.network_analyzer_args}}.
+
+  # ── Bước 3: So khớp chéo và Trinh sát mở rộng (Correlation & Pivot Recon) ─────
+  - id: ioc-correlation-step
+    type: single
+    agent: agents/correlation-agent.md
+    depends_on:
+      - evidence-collection-step
+    prompt: >
+      NHIỆM VỤ: Thực hiện so khớp chéo bằng chứng (Cross-Evidence Correlation).
+      Chạy lệnh: python3 ./.pi/skills/correlation-analyzer/correlation_analyzer.py --log-file {{output_dir}}/log_collector_result.json --net-file {{output_dir}}/network_analyzer_result.json --triage-file {{output_dir}}/triage_context.json --output {{output_dir}}/pivot_manifest.json
+
+  - id: pivot-recon-step
+    type: single
+    agent: agents/recon-agent.md
+    depends_on:
+      - ioc-correlation-step
+    prompt: >
+      NHIỆM VỤ 2: Thực thi Trinh sát mở rộng (Pivot Recon) VÀ Tổng hợp.
+      1. Đọc file {{output_dir}}/pivot_manifest.json.
+      2. THỰC THI SONG SONG: Chạy TẤT CẢ các lệnh có trong danh sách `commands` của file manifest.
+      3. TỔNG HỢP: Đọc tất cả các file `recon_pivot_*.json` vừa tạo, lọc các IOC độc hại và lưu vào {{output_dir}}/pivot_summary.json.
+
+  # ── Bước 4: Tổng hợp báo cáo (Final Report) ───────────────────────
+  - id: final-report
+    type: single
+    agent: agents/reporting-agent.md
+    depends_on:
+      - pivot-recon-step
+    prompt: >
+      Tạo báo cáo IR tổng hợp dựa trên:
+      1. Triage: {{output_dir}}/triage_context.json
+      2. Initial OSINT: {{output_dir}}/recon_result.json
+      3. Pivot OSINT Summary: {{output_dir}}/pivot_summary.json
+      4. Host Logs: {{output_dir}}/log_collector_result.json
+      5. Network Flows: {{output_dir}}/network_analyzer_result.json
+      6. Correlation Manifest: {{output_dir}}/pivot_manifest.json
+      
+      Ánh xạ vào MITRE ATT&CK và đề xuất bước ngăn chặn.
+      Lưu báo cáo vào {{output_dir}}/IR_REPORT_{{ioc}}.md.
